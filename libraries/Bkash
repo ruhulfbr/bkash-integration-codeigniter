@@ -1,0 +1,148 @@
+<?php
+
+defined('BASEPATH') OR exit('No direct script access allowed');
+
+class Bkash {
+
+    protected $CI;
+    public $data;
+
+    public function __construct($params = []){
+        $this->CI   = & get_instance();
+        $this->data = new stdClass();
+    }
+
+    public function token(){
+        $result = $this->getToken();
+
+        if(!empty($result->id_token)){
+            $token = $result->id_token;
+
+            $this->updateConfig($token);
+
+            $this->data->status  = 'success';
+            $this->data->message = 'Token found';
+            $this->data->token   = $token;
+
+        }
+        else if(!empty($result->status) && $result->status == 'fail'){
+            $this->data->status = 'error';
+            $this->data->message = !empty($result->msg) ? $result->msg : 'Something went wrong';
+        }
+        else{
+            $this->data->status = 'error';
+            $this->data->message = 'Something went wrong';
+        }
+
+        return $this->data;
+    }
+
+    public function create($params){
+        $config = $this->getConfig();
+        $postData = [
+            'amount'                => $params['amount'], 
+            'currency'              => 'BDT', 
+            'merchantInvoiceNumber' => $params['invoice_no'],
+            'intent'                => $params['intent']
+        ];    
+
+        $proxy = $config["proxy"];
+        $headers = [
+            'Content-Type:application/json',
+            'authorization:'.$config["token"],
+            'x-app-key:'.$config["app_key"]
+        ];
+
+        $response = $this->curlAction($config["createURL"], $headers, $postData, $proxy);
+        if( !empty($response->paymentID) ){
+            $this->data->status  = 'success';
+            $this->data->message = !empty($response->statusMessage) ? $response->statusMessage : 'SUCCESS';
+            $this->data->data    = $response;
+        }
+        else{
+            $this->data->status  = 'error';
+            $this->data->message = !empty($response->statusMessage) ? $response->statusMessage : 'ERROR';
+            $this->data->data    = $response;
+        }
+
+        return $this->data;
+    }
+
+    public function execute($params){
+        $config = $this->getConfig();
+
+        $paymentID  = $params['paymentID'];
+        $proxy      = $config["proxy"];
+        $executeURL = $config["executeURL"].$paymentID;
+
+        $headers = [
+            'Content-Type:application/json',
+            'authorization:'.$config["token"],
+            'x-app-key:'.$config["app_key"]              
+        ];  
+
+        $response = $this->curlAction($executeURL, $headers, [], $proxy);  pr($response);
+        if( $response->transactionStatus == 'Completed' ){
+            $this->data->status  = 'success';
+            $this->data->message = !empty($response->statusMessage) ? $response->statusMessage : 'SUCCESS';
+            $this->data->data    = $response;
+        }
+        else{
+            $this->data->status  = 'error';
+            $this->data->message = !empty($response->statusMessage) ? $response->statusMessage : 'ERROR';
+            $this->data->data    = $response;
+        }
+
+        return $this->data;
+    }
+
+    private function getToken(){
+        $config = $this->getConfig();
+
+        $postData = [
+            'app_key'    => $config["app_key"],                                              
+            'app_secret' => $config["app_secret"]                  
+        ];
+        
+        $proxy = $config["proxy"];
+        $headers = [
+            'Content-Type:application/json',
+            'password:'.$config["password"],                                                               
+            'username:'.$config["username"]                                                           
+        ];              
+        
+        return $this->curlAction($config["tokenURL"], $headers, $postData, $proxy);
+    }
+
+    private function curlAction($endUrl, $headers, $postData, $proxy=false){
+        $url = curl_init($endUrl);
+        curl_setopt($url,CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($url,CURLOPT_CUSTOMREQUEST, "POST");
+        curl_setopt($url,CURLOPT_RETURNTRANSFER, true);
+
+        if( !empty( $postData ) ){
+            curl_setopt($url,CURLOPT_POSTFIELDS, json_encode($postData));   
+        }
+
+        curl_setopt($url,CURLOPT_FOLLOWLOCATION, 1);
+        if($proxy){
+            curl_setopt($url, CURLOPT_PROXY, $proxy);   
+        }
+
+        $response = curl_exec($url);
+        curl_close($url);
+
+        return json_decode($response);
+    }
+
+    private function getConfig(){
+        $config = $this->CI->config->item('BKASH_CREDENTIALS');
+        $config['token'] = $this->CI->session->userdata('token') ?? '';
+
+        return $config;
+    }
+
+    private function updateConfig($token){
+        $this->CI->session->set_userdata('token', $token);
+    }
+}
